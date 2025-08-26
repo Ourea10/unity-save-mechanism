@@ -17,26 +17,37 @@ public class SaveData
     public string playerName;
     public int level;
     
+    // Upgrade system data
+    public int scorePerClickLevel;
+    public int prestigeLevel;
+    public int baseMultiplier;
+    
     public SaveData()
     {
         score = 0;
         saveDateTime = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
         playerName = "Player";
         level = 1;
+        scorePerClickLevel = 0;
+        prestigeLevel = 0;
+        baseMultiplier = 1;
     }
     
-    public SaveData(int currentScore)
+    public SaveData(int currentScore, int clickLevel, int prestige, int baseMult)
     {
         score = currentScore;
         saveDateTime = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
         playerName = "Player";
         level = 1;
+        scorePerClickLevel = clickLevel;
+        prestigeLevel = prestige;
+        baseMultiplier = baseMult;
     }
     
     // Get data string for hash calculation (excludes hash itself)
     public string GetDataString()
     {
-        return $"{score}|{saveDateTime}|{playerName}|{level}";
+        return $"{score}|{saveDateTime}|{playerName}|{level}|{scorePerClickLevel}|{prestigeLevel}|{baseMultiplier}";
     }
 }
 
@@ -97,8 +108,24 @@ public class GameController : MonoBehaviour
     public GameObject pausePanel;       // Pause panel to show/hide
     public GameObject gamePanel;        // Game panel to show/hide
     
+    [Header("Upgrade UI References")]
+    public Button upgradeClickButton;   // Button to upgrade click power
+    public Button prestigeButton;       // Button to prestige/reset
+    public TextMeshProUGUI upgradeClickText; // Text showing upgrade cost and level
+    public TextMeshProUGUI prestigeText;     // Text showing prestige cost and level
+    public TextMeshProUGUI clickPowerText;   // Text showing current click power
+    
     [Header("Game Stats")]
     public int currentScore = 0;        // Current player score
+    
+    [Header("Upgrade System")]
+    public int scorePerClickLevel = 0;  // Level of score per click upgrade
+    public int prestigeLevel = 0;       // Prestige level (resets)
+    public int baseMultiplier = 1;      // Base multiplier from prestige
+    
+    // Upgrade costs
+    private int baseUpgradeCost = 10;   // Base cost for click upgrade
+    private int basePrestigeCost = 1000; // Base cost for prestige
     
     [Header("Game State")]
     public bool isPaused = false;       // Game pause state
@@ -125,6 +152,9 @@ public class GameController : MonoBehaviour
         // Setup button listeners
         SetupButtonListeners();
         
+        // Update upgrade UI (only if UI elements are assigned)
+        UpdateUpgradeUI();
+        
         // Get pause controller reference
         pauseController = FindObjectOfType<GamePauseController>();
         
@@ -144,6 +174,19 @@ public class GameController : MonoBehaviour
         // Pause button
         if (pauseButton != null)
             pauseButton.onClick.AddListener(PauseGame);
+            
+        // Upgrade buttons
+        if (upgradeClickButton != null)
+        {
+            upgradeClickButton.onClick.RemoveAllListeners();
+            upgradeClickButton.onClick.AddListener(BuyClickUpgrade);
+        }
+            
+        if (prestigeButton != null)
+        {
+            prestigeButton.onClick.RemoveAllListeners();
+            prestigeButton.onClick.AddListener(BuyPrestige);
+        }
     }
     
     // Called when player clicks the main game button
@@ -151,9 +194,11 @@ public class GameController : MonoBehaviour
     {
         if (!isPaused)
         {
-            currentScore++;
+            int scoreGain = GetScorePerClick();
+            currentScore += scoreGain;
             UpdateScoreDisplay();
-            Debug.Log($"Score increased! Current score: {currentScore}");
+            UpdateUpgradeUI();
+            Debug.Log($"Score increased by {scoreGain}! Current score: {currentScore}");
         }
     }
     
@@ -162,6 +207,42 @@ public class GameController : MonoBehaviour
     {
         if (scoreText != null)
             scoreText.text = "Score: " + currentScore.ToString();
+    }
+    
+    // Update upgrade UI elements
+    void UpdateUpgradeUI()
+    {
+        try
+        {
+            // Update click power display
+            if (clickPowerText != null)
+                clickPowerText.text = $"Click Power: {GetScorePerClick()}";
+                
+            // Update click upgrade button
+            if (upgradeClickText != null)
+            {
+                int upgradeCost = GetClickUpgradeCost();
+                upgradeClickText.text = $"Upgrade Click\nLevel {scorePerClickLevel}\nCost: {upgradeCost}";
+            }
+            
+            // Update prestige button
+            if (prestigeText != null)
+            {
+                int prestigeCost = GetPrestigeCost();
+                prestigeText.text = $"Prestige\nLevel {prestigeLevel}\nCost: {prestigeCost}\nBase x{baseMultiplier}";
+            }
+            
+            // Enable/disable buttons based on affordability
+            if (upgradeClickButton != null)
+                upgradeClickButton.interactable = currentScore >= GetClickUpgradeCost();
+                
+            if (prestigeButton != null)
+                prestigeButton.interactable = currentScore >= GetPrestigeCost();
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError($"Error updating upgrade UI: {e.Message}");
+        }
     }
     
     // Pause the game
@@ -205,6 +286,86 @@ public class GameController : MonoBehaviour
     {
         currentScore = newScore;
         UpdateScoreDisplay();
+        UpdateUpgradeUI();
+    }
+    
+    // Load all game data from save file
+    private void LoadGameData(SaveData data)
+    {
+        currentScore = data.score;
+        scorePerClickLevel = data.scorePerClickLevel;
+        prestigeLevel = data.prestigeLevel;
+        baseMultiplier = data.baseMultiplier;
+        
+        // Ensure backward compatibility with old saves
+        if (baseMultiplier <= 0) baseMultiplier = 1;
+        
+        UpdateScoreDisplay();
+        UpdateUpgradeUI();
+    }
+    
+    // Calculate current score per click
+    public int GetScorePerClick()
+    {
+        return (1 + scorePerClickLevel) * baseMultiplier;
+    }
+    
+    // Calculate cost for next click upgrade
+    public int GetClickUpgradeCost()
+    {
+        return baseUpgradeCost + (scorePerClickLevel * 10);
+    }
+    
+    // Calculate cost for next prestige
+    public int GetPrestigeCost()
+    {
+        return basePrestigeCost + (prestigeLevel * 1000);
+    }
+    
+    // Buy click upgrade
+    public void BuyClickUpgrade()
+    {
+        int cost = GetClickUpgradeCost();
+        if (currentScore >= cost && !isPaused)
+        {
+            currentScore -= cost;
+            scorePerClickLevel++;
+            
+            UpdateScoreDisplay();
+            UpdateUpgradeUI();
+            
+            Debug.Log($"Bought click upgrade! Level: {scorePerClickLevel}, New click power: {GetScorePerClick()}");
+        }
+        else
+        {
+            Debug.Log($"Cannot afford click upgrade. Need {cost}, have {currentScore}");
+        }
+    }
+    
+    // Buy prestige (reset but increase base multiplier)
+    public void BuyPrestige()
+    {
+        int cost = GetPrestigeCost();
+        if (currentScore >= cost && !isPaused)
+        {
+            // Increase prestige level and base multiplier
+            prestigeLevel++;
+            baseMultiplier++;
+            
+            // Reset progress but keep prestige bonuses
+            currentScore = 0;
+            scorePerClickLevel = 0;
+            
+            UpdateScoreDisplay();
+            UpdateUpgradeUI();
+            
+            Debug.Log($"Prestiged! Level: {prestigeLevel}, New base multiplier: {baseMultiplier}");
+            Debug.Log($"Progress reset but now each click upgrade is {baseMultiplier}x more powerful!");
+        }
+        else
+        {
+            Debug.Log($"Cannot afford prestige. Need {cost}, have {currentScore}");
+        }
     }
     
     // Create save directory if it doesn't exist
@@ -253,8 +414,8 @@ public class GameController : MonoBehaviour
     {
         try
         {
-            // Create save data
-            SaveData saveData = new SaveData(currentScore);
+            // Create save data with all upgrade info
+            SaveData saveData = new SaveData(currentScore, scorePerClickLevel, prestigeLevel, baseMultiplier);
             
             // Create secure save data with hash
             SecureSaveData secureData = new SecureSaveData(saveData, SAVE_SECRET_KEY);
@@ -295,9 +456,10 @@ public class GameController : MonoBehaviour
                     
                     if (secureData != null && secureData.IsValid(SAVE_SECRET_KEY))
                     {
-                        // Valid secure save - apply data
-                        SetScore(secureData.gameData.score);
+                        // Valid secure save - apply all data
+                        LoadGameData(secureData.gameData);
                         Debug.Log($"Game loaded from slot {slotNumber}! Score: {secureData.gameData.score}");
+                        Debug.Log($"Click Level: {secureData.gameData.scorePerClickLevel}, Prestige: {secureData.gameData.prestigeLevel}");
                         Debug.Log($"Save date: {secureData.gameData.saveDateTime}");
                         Debug.Log($"Save data integrity verified ✓");
                         return true;
@@ -314,7 +476,7 @@ public class GameController : MonoBehaviour
                     // Try to load as legacy save data (old format without hash)
                     Debug.LogWarning($"Loading legacy save format for slot {slotNumber} (no hash protection)");
                     SaveData legacyData = JsonUtility.FromJson<SaveData>(jsonData);
-                    SetScore(legacyData.score);
+                    LoadGameData(legacyData);
                     Debug.Log($"Legacy game loaded from slot {slotNumber}! Score: {legacyData.score}");
                     return true;
                 }
@@ -356,7 +518,7 @@ public class GameController : MonoBehaviour
                     
                     if (secureData != null && secureData.IsValid(SAVE_SECRET_KEY))
                     {
-                        return $"Score: {secureData.gameData.score}\n{secureData.gameData.saveDateTime.Substring(0, 16)}";
+                        return $"Score: {secureData.gameData.score}\nClick Lv: {secureData.gameData.scorePerClickLevel} | Prestige: {secureData.gameData.prestigeLevel}\n{secureData.gameData.saveDateTime.Substring(0, 16)}";
                     }
                     else
                     {
@@ -367,7 +529,7 @@ public class GameController : MonoBehaviour
                 {
                     // Try legacy format
                     SaveData legacyData = JsonUtility.FromJson<SaveData>(jsonData);
-                    return $"Score: {legacyData.score}\n{legacyData.saveDateTime.Substring(0, 16)}";
+                    return $"Score: {legacyData.score}\nLegacy Save\n{legacyData.saveDateTime.Substring(0, 16)}";
                 }
             }
             else
